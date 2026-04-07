@@ -16,7 +16,7 @@ import {
   Zed,
 } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
-import { readNativeApi } from "~/nativeApi";
+import { useActiveApi } from "~/connections/activeServerContext";
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
@@ -82,6 +82,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
 }) {
+  const api = useActiveApi();
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
     () => resolveOptions(navigator.platform, availableEditors),
@@ -91,14 +92,13 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
-      const api = readNativeApi();
-      if (!api || !openInCwd) return;
+      if (!openInCwd) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
       void api.shell.openInEditor(openInCwd, editor);
       setPreferredEditor(editor);
     },
-    [preferredEditor, openInCwd, setPreferredEditor],
+    [api, preferredEditor, openInCwd, setPreferredEditor],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -108,9 +108,8 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
-      const api = readNativeApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!api || !openInCwd) return;
+      if (!openInCwd) return;
       if (!preferredEditor) return;
 
       e.preventDefault();
@@ -118,7 +117,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [preferredEditor, keybindings, openInCwd]);
+  }, [api, preferredEditor, keybindings, openInCwd]);
 
   return (
     <Group aria-label="Subscription actions">

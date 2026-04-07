@@ -3,7 +3,7 @@ import { FolderIcon, GitForkIcon } from "lucide-react";
 import { useCallback } from "react";
 
 import { newCommandId } from "../lib/utils";
-import { readNativeApi } from "../nativeApi";
+import { useActiveApi } from "../connections/activeServerContext";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import {
@@ -34,6 +34,7 @@ export default function BranchToolbar({
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarProps) {
+  const api = useActiveApi();
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
   const setThreadBranchAction = useStore((store) => store.setThreadBranch);
@@ -47,6 +48,7 @@ export default function BranchToolbar({
   const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
+  const gitServerId = serverThread?.serverId ?? "default";
   const hasServerThread = serverThread !== undefined;
   const effectiveEnvMode = resolveEffectiveEnvMode({
     activeWorktreePath,
@@ -57,10 +59,9 @@ export default function BranchToolbar({
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null) => {
       if (!activeThreadId) return;
-      const api = readNativeApi();
       // If the effective cwd is about to change, stop the running session so the
       // next message creates a new one with the correct cwd.
-      if (serverThread?.session && worktreePath !== activeWorktreePath && api) {
+      if (serverThread?.session && worktreePath !== activeWorktreePath) {
         void api.orchestration
           .dispatchCommand({
             type: "thread.session.stop",
@@ -70,7 +71,7 @@ export default function BranchToolbar({
           })
           .catch(() => undefined);
       }
-      if (api && hasServerThread) {
+      if (hasServerThread) {
         void api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
@@ -95,6 +96,7 @@ export default function BranchToolbar({
       });
     },
     [
+      api,
       activeThreadId,
       serverThread?.session,
       activeWorktreePath,
@@ -160,6 +162,7 @@ export default function BranchToolbar({
         activeThreadBranch={activeThreadBranch}
         activeWorktreePath={activeWorktreePath}
         branchCwd={branchCwd}
+        gitServerId={gitServerId}
         effectiveEnvMode={effectiveEnvMode}
         envLocked={envLocked}
         onSetThreadBranch={setThreadBranch}

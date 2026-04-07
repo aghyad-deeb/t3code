@@ -3,6 +3,7 @@ import { Duration, Effect, Layer, Schedule } from "effect";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
+import type { ProtocolHooks } from "../connections/types";
 import { resolveServerUrl } from "../lib/utils";
 import {
   acknowledgeRpcRequest,
@@ -24,7 +25,22 @@ type RpcClientFactory = typeof makeWsRpcProtocolClient;
 export type WsRpcProtocolClient =
   RpcClientFactory extends Effect.Effect<infer Client, any, any> ? Client : never;
 
-export function createWsRpcProtocolLayer(url?: string) {
+/**
+ * Default hooks that delegate to the global singleton state functions.
+ * Used when no explicit hooks are provided (backward-compatible path).
+ */
+const defaultProtocolHooks: ProtocolHooks = {
+  onAttempt: (socketUrl) => recordWsConnectionAttempt(socketUrl),
+  onOpened: () => recordWsConnectionOpened(),
+  onErrored: (message) => recordWsConnectionErrored(message),
+  onClosed: (details) => recordWsConnectionClosed(details),
+  onRequestSent: (requestId, tag) => trackRpcRequestSent(requestId, tag),
+  onRequestAcked: (requestId) => acknowledgeRpcRequest(requestId),
+  onAllRequestsCleared: () => clearAllTrackedRpcRequests(),
+};
+
+export function createWsRpcProtocolLayer(url?: string, hooks?: ProtocolHooks) {
+  const h = hooks ?? defaultProtocolHooks;
   const resolvedUrl = resolveServerUrl({
     url,
     protocol: window.location.protocol === "https:" ? "wss" : "ws",
@@ -33,29 +49,29 @@ export function createWsRpcProtocolLayer(url?: string) {
   const trackingWebSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
     (socketUrl, protocols) => {
-      recordWsConnectionAttempt(socketUrl);
+      h.onAttempt(socketUrl);
       const socket = new globalThis.WebSocket(socketUrl, protocols);
 
       socket.addEventListener(
         "open",
         () => {
-          recordWsConnectionOpened();
+          h.onOpened();
         },
         { once: true },
       );
       socket.addEventListener(
         "error",
         () => {
-          clearAllTrackedRpcRequests();
-          recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
+          h.onAllRequestsCleared();
+          h.onErrored("Unable to connect to the T3 server WebSocket.");
         },
         { once: true },
       );
       socket.addEventListener(
         "close",
         (event) => {
-          clearAllTrackedRpcRequests();
-          recordWsConnectionClosed({
+          h.onAllRequestsCleared();
+          h.onClosed({
             code: event.code,
             reason: event.reason,
           });
@@ -84,15 +100,15 @@ export function createWsRpcProtocolLayer(url?: string) {
         run: (writeResponse) =>
           protocol.run((response) => {
             if (response._tag === "Chunk" || response._tag === "Exit") {
-              acknowledgeRpcRequest(response.requestId);
+              h.onRequestAcked(response.requestId);
             } else if (response._tag === "ClientProtocolError" || response._tag === "Defect") {
-              clearAllTrackedRpcRequests();
+              h.onAllRequestsCleared();
             }
             return writeResponse(response);
           }),
         send: (request, transferables) => {
           if (request._tag === "Request") {
-            trackRpcRequestSent(request.id, request.tag);
+            h.onRequestSent(request.id, request.tag);
           }
           return protocol.send(request, transferables);
         },

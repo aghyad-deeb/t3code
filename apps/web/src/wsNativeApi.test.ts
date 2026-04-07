@@ -86,6 +86,14 @@ const rpcClientMock = {
   },
 };
 
+vi.mock("./connections/connectionRegistry", () => {
+  return {
+    getDefaultConnection: () => ({ rpcClient: rpcClientMock }),
+    getConnection: vi.fn(() => undefined),
+    __resetDefaultConnectionForTests: vi.fn(),
+  };
+});
+
 vi.mock("./wsRpcClient", () => {
   return {
     getWsRpcClient: () => rpcClientMock,
@@ -135,6 +143,16 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       throw new Error("installUpdate not implemented in test");
     },
     onUpdateState: () => () => undefined,
+    sshConnect: async () => {
+      throw new Error("sshConnect not implemented in test");
+    },
+    sshDisconnect: async () => {
+      throw new Error("sshDisconnect not implemented in test");
+    },
+    sshListHosts: async () => [],
+    sshSaveHost: async () => {
+      throw new Error("sshSaveHost not implemented in test");
+    },
     ...overrides,
   };
 }
@@ -368,5 +386,12 @@ describe("wsNativeApi", () => {
 
     await expect(api.contextMenu.show(items, { x: 4, y: 5 })).resolves.toBe("rename");
     expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
+  });
+
+  it("getNativeApiForServer throws when no connection exists for a remote server id", async () => {
+    const { getNativeApiForServer } = await import("./wsNativeApi");
+    expect(() => getNativeApiForServer("definitely-not-registered-remote-id")).toThrow(
+      /No WebSocket connection registered/,
+    );
   });
 });

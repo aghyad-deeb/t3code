@@ -24,7 +24,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
-import { readNativeApi } from "~/nativeApi";
+import { useActiveApi } from "~/connections/activeServerContext";
 import { toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
@@ -67,6 +67,7 @@ const PlanSidebar = memo(function PlanSidebar({
   timestampFormat,
   onClose,
 }: PlanSidebarProps) {
+  const api = useActiveApi();
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard();
@@ -87,8 +88,7 @@ const PlanSidebar = memo(function PlanSidebar({
   }, [planMarkdown]);
 
   const handleSaveToWorkspace = useCallback(() => {
-    const api = readNativeApi();
-    if (!api || !workspaceRoot || !planMarkdown) return;
+    if (!workspaceRoot || !planMarkdown) return;
     const filename = buildProposedPlanMarkdownFilename(planMarkdown);
     setIsSavingToWorkspace(true);
     void api.projects
@@ -115,7 +115,7 @@ const PlanSidebar = memo(function PlanSidebar({
         () => setIsSavingToWorkspace(false),
         () => setIsSavingToWorkspace(false),
       );
-  }, [planMarkdown, workspaceRoot]);
+  }, [api, planMarkdown, workspaceRoot]);
 
   return (
     <div className="flex h-full w-[340px] shrink-0 flex-col border-l border-border/70 bg-card/50">

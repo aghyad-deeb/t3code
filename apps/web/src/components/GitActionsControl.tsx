@@ -50,7 +50,7 @@ import {
 } from "~/lib/gitReactQuery";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
-import { readNativeApi } from "~/nativeApi";
+import { useActiveApi } from "~/connections/activeServerContext";
 import { useStore } from "~/store";
 
 interface GitActionsControlProps {
@@ -206,6 +206,7 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
 }
 
 export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+  const api = useActiveApi();
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -245,22 +246,19 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       }
 
       const worktreePath = activeServerThread.worktreePath;
-      const api = readNativeApi();
-      if (api) {
-        void api.orchestration
-          .dispatchCommand({
-            type: "thread.meta.update",
-            commandId: newCommandId(),
-            threadId: activeThreadId,
-            branch,
-            worktreePath,
-          })
-          .catch(() => undefined);
-      }
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: activeThreadId,
+          branch,
+          worktreePath,
+        })
+        .catch(() => undefined);
 
       setThreadBranch(activeThreadId, branch, worktreePath);
     },
-    [activeServerThread, activeThreadId, setThreadBranch],
+    [api, activeServerThread, activeThreadId, setThreadBranch],
   );
 
   const syncThreadBranchAfterGitAction = useCallback(
@@ -275,7 +273,10 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
+  const gitServerId = activeServerThread?.serverId ?? "default";
+  const { data: gitStatus = null, error: gitStatusError } = useQuery(
+    gitStatusQueryOptions(gitCwd, api, gitServerId),
+  );
   // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
   const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
@@ -286,19 +287,26 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
 
-  const initMutation = useMutation(gitInitMutationOptions({ cwd: gitCwd, queryClient }));
+  const initMutation = useMutation(
+    gitInitMutationOptions({ cwd: gitCwd, queryClient, api, serverId: gitServerId }),
+  );
 
   const runImmediateGitActionMutation = useMutation(
     gitRunStackedActionMutationOptions({
       cwd: gitCwd,
       queryClient,
+      api,
+      serverId: gitServerId,
     }),
   );
-  const pullMutation = useMutation(gitPullMutationOptions({ cwd: gitCwd, queryClient }));
+  const pullMutation = useMutation(
+    gitPullMutationOptions({ cwd: gitCwd, queryClient, api, serverId: gitServerId }),
+  );
 
   const isRunStackedActionRunning =
-    useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd) }) > 0;
-  const isPullRunning = useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd) }) > 0;
+    useIsMutating({ mutationKey: gitMutationKeys.runStackedAction(gitCwd, gitServerId) }) > 0;
+  const isPullRunning =
+    useIsMutating({ mutationKey: gitMutationKeys.pull(gitCwd, gitServerId) }) > 0;
   const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
 
   useEffect(() => {
@@ -360,15 +368,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   }, [updateActiveProgressToast]);
 
   const openExistingPr = useCallback(async () => {
-    const api = readNativeApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Link opening is unavailable.",
-        data: threadToastData,
-      });
-      return;
-    }
     const prUrl = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr.url : null;
     if (!prUrl) {
       toastManager.add({
@@ -386,7 +385,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         data: threadToastData,
       });
     });
-  }, [gitStatusForActions, threadToastData]);
+  }, [api, gitStatusForActions, threadToastData]);
 
   runGitActionWithToast = useEffectEvent(
     async ({
@@ -567,8 +566,6 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           toastActionProps = {
             children: toastCta.label,
             onClick: () => {
-              const api = readNativeApi();
-              if (!api) return;
               closeResultToast();
               void api.shell.openExternal(toastCta.url);
             },
@@ -726,8 +723,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const openChangedFileInEditor = useCallback(
     (filePath: string) => {
-      const api = readNativeApi();
-      if (!api || !gitCwd) {
+      if (!gitCwd) {
         toastManager.add({
           type: "error",
           title: "Editor opening is unavailable.",
@@ -745,7 +741,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
       });
     },
-    [gitCwd, threadToastData],
+    [api, gitCwd, threadToastData],
   );
 
   if (!gitCwd) return null;
@@ -801,7 +797,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu
             onOpenChange={(open) => {
-              if (open) void invalidateGitStatusQuery(queryClient, gitCwd);
+              if (open) void invalidateGitStatusQuery(queryClient, gitCwd, gitServerId);
             }}
           >
             <MenuTrigger

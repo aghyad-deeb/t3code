@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyOrchestrationEvent,
   applyOrchestrationEvents,
+  purgeServerEntitiesFromState,
   syncServerReadModel,
   type AppState,
 } from "./store";
@@ -42,6 +43,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    serverId: "default",
     ...overrides,
   };
 }
@@ -61,6 +63,7 @@ function makeState(thread: Thread): AppState {
           model: "gpt-5-codex",
         },
         scripts: [],
+        serverId: "default",
       },
     ],
     threads: [thread],
@@ -263,6 +266,7 @@ describe("store read model sync", () => {
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
           scripts: [],
+          serverId: "default",
         },
         {
           id: project1,
@@ -273,6 +277,7 @@ describe("store read model sync", () => {
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
           scripts: [],
+          serverId: "default",
         },
       ],
       threads: [],
@@ -365,6 +370,7 @@ describe("incremental orchestration updates", () => {
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
           scripts: [],
+          serverId: "default",
         },
       ],
       threads: [],
@@ -395,6 +401,95 @@ describe("incremental orchestration updates", () => {
     expect(next.projects[0]?.name).toBe("Project Recreated");
   });
 
+  it("does not merge project.created across servers when workspace path matches", () => {
+    const defaultProjectId = ProjectId.makeUnsafe("project-default");
+    const remoteProjectId = ProjectId.makeUnsafe("project-remote");
+    const state: AppState = {
+      projects: [
+        {
+          id: defaultProjectId,
+          name: "Local",
+          cwd: "/tmp/repo",
+          defaultModelSelection: {
+            provider: "codex",
+            model: DEFAULT_MODEL_BY_PROVIDER.codex,
+          },
+          scripts: [],
+          serverId: "default",
+        },
+      ],
+      threads: [],
+      sidebarThreadsById: {},
+      threadIdsByProjectId: {},
+      bootstrapComplete: true,
+    };
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("project.created", {
+        projectId: remoteProjectId,
+        title: "Remote",
+        workspaceRoot: "/tmp/repo",
+        defaultModelSelection: {
+          provider: "codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        },
+        scripts: [],
+        createdAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+      "gpu-box",
+    );
+
+    expect(next.projects).toHaveLength(2);
+    expect(next.projects.map((p) => p.serverId).toSorted()).toEqual(["default", "gpu-box"]);
+  });
+
+  it("purgeServerEntitiesFromState removes only the targeted server's entities", () => {
+    const t1 = makeThread({
+      id: ThreadId.makeUnsafe("t1"),
+      serverId: "default",
+    });
+    const t2 = makeThread({
+      id: ThreadId.makeUnsafe("t2"),
+      projectId: ProjectId.makeUnsafe("project-2"),
+      serverId: "remote",
+    });
+    const state: AppState = {
+      projects: [
+        {
+          id: ProjectId.makeUnsafe("project-1"),
+          name: "P1",
+          cwd: "/a",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          scripts: [],
+          serverId: "default",
+        },
+        {
+          id: ProjectId.makeUnsafe("project-2"),
+          name: "P2",
+          cwd: "/b",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          scripts: [],
+          serverId: "remote",
+        },
+      ],
+      threads: [t1, t2],
+      sidebarThreadsById: {},
+      threadIdsByProjectId: {
+        [ProjectId.makeUnsafe("project-1")]: [t1.id],
+        [ProjectId.makeUnsafe("project-2")]: [t2.id],
+      },
+      bootstrapComplete: true,
+    };
+
+    const next = purgeServerEntitiesFromState(state, "remote");
+    expect(next.projects).toHaveLength(1);
+    expect(next.projects[0]?.serverId).toBe("default");
+    expect(next.threads).toHaveLength(1);
+    expect(next.threads[0]?.serverId).toBe("default");
+  });
+
   it("removes stale project index entries when thread.created recreates a thread under a new project", () => {
     const originalProjectId = ProjectId.makeUnsafe("project-1");
     const recreatedProjectId = ProjectId.makeUnsafe("project-2");
@@ -414,6 +509,7 @@ describe("incremental orchestration updates", () => {
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
           scripts: [],
+          serverId: "default",
         },
         {
           id: recreatedProjectId,
@@ -424,6 +520,7 @@ describe("incremental orchestration updates", () => {
             model: DEFAULT_MODEL_BY_PROVIDER.codex,
           },
           scripts: [],
+          serverId: "default",
         },
       ],
       threads: [thread],

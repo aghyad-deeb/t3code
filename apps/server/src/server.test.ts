@@ -291,6 +291,7 @@ const buildAppUnderTest = (options?: {
       authToken: undefined,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
+      printReadyJson: false,
       ...options?.config,
     };
     const layerConfig = Layer.succeed(ServerConfig, config);

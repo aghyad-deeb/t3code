@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
-import { readNativeApi } from "~/nativeApi";
+import { useActiveApi } from "~/connections/activeServerContext";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
@@ -36,6 +36,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
 }) {
+  const api = useActiveApi();
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
@@ -82,9 +83,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   const handleSaveToWorkspace = () => {
-    const api = readNativeApi();
     const relativePath = savePath.trim();
-    if (!api || !workspaceRoot) {
+    if (!workspaceRoot) {
       return;
     }
     if (!relativePath) {

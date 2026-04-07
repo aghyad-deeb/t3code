@@ -20,7 +20,7 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "../lib/gitReactQuery";
-import { readNativeApi } from "../nativeApi";
+import { useActiveApi } from "../connections/activeServerContext";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
   deriveLocalBranchNameFromRemoteRef,
@@ -47,6 +47,8 @@ interface BranchToolbarBranchSelectorProps {
   activeThreadBranch: string | null;
   activeWorktreePath: string | null;
   branchCwd: string | null;
+  /** Client connection id for git query keys and RPC (multi-server). */
+  gitServerId?: string;
   effectiveEnvMode: EnvMode;
   envLocked: boolean;
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
@@ -78,27 +80,34 @@ export function BranchToolbarBranchSelector({
   activeThreadBranch,
   activeWorktreePath,
   branchCwd,
+  gitServerId = "default",
   effectiveEnvMode,
   envLocked,
   onSetThreadBranch,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
+  const api = useActiveApi();
   const queryClient = useQueryClient();
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useQuery(gitStatusQueryOptions(branchCwd));
+  const branchStatusQuery = useQuery(gitStatusQueryOptions(branchCwd, api, gitServerId));
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
 
   useEffect(() => {
     if (!branchCwd) return;
     void queryClient.prefetchInfiniteQuery(
-      gitBranchSearchInfiniteQueryOptions({ cwd: branchCwd, query: "" }),
+      gitBranchSearchInfiniteQueryOptions({
+        cwd: branchCwd,
+        query: "",
+        api,
+        serverId: gitServerId,
+      }),
     );
-  }, [branchCwd, queryClient]);
+  }, [api, branchCwd, gitServerId, queryClient]);
 
   const {
     data: branchesSearchData,
@@ -111,6 +120,8 @@ export function BranchToolbarBranchSelector({
       cwd: branchCwd,
       query: deferredTrimmedBranchQuery,
       enabled: isBranchMenuOpen,
+      api,
+      serverId: gitServerId,
     }),
   );
   const branches = useMemo(
@@ -188,13 +199,14 @@ export function BranchToolbarBranchSelector({
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
       await action().catch(() => undefined);
-      await invalidateGitQueries(queryClient).catch(() => undefined);
+      await invalidateGitQueries(queryClient, { cwd: branchCwd, serverId: gitServerId }).catch(
+        () => undefined,
+      );
     });
   };
 
   const selectBranch = (branch: GitBranch) => {
-    const api = readNativeApi();
-    if (!api || !branchCwd || isBranchActionPending) return;
+    if (!branchCwd || isBranchActionPending) return;
 
     // In new-worktree mode, selecting a branch sets the base branch.
     if (isSelectingWorktreeBase) {
@@ -229,7 +241,10 @@ export function BranchToolbarBranchSelector({
       setOptimisticBranch(selectedBranchName);
       try {
         await api.git.checkout({ cwd: selectionTarget.checkoutCwd, branch: branch.name });
-        await invalidateGitQueries(queryClient);
+        await invalidateGitQueries(queryClient, {
+          cwd: selectionTarget.checkoutCwd,
+          serverId: gitServerId,
+        });
       } catch (error) {
         toastManager.add({
           type: "error",
@@ -254,8 +269,7 @@ export function BranchToolbarBranchSelector({
 
   const createBranch = (rawName: string) => {
     const name = rawName.trim();
-    const api = readNativeApi();
-    if (!api || !branchCwd || !name || isBranchActionPending) return;
+    if (!branchCwd || !name || isBranchActionPending) return;
 
     setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
@@ -316,10 +330,10 @@ export function BranchToolbarBranchSelector({
         return;
       }
       void queryClient.invalidateQueries({
-        queryKey: gitQueryKeys.branches(branchCwd),
+        queryKey: gitQueryKeys.branches(branchCwd, gitServerId),
       });
     },
-    [branchCwd, queryClient],
+    [branchCwd, gitServerId, queryClient],
   );
 
   const branchListScrollElementRef = useRef<HTMLDivElement | null>(null);

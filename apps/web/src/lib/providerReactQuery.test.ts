@@ -23,6 +23,19 @@ afterEach(() => {
 });
 
 describe("providerQueryKeys.checkpointDiff", () => {
+  it("scopes keys by serverId for multi-connection checkpoint diffs", () => {
+    const baseInput = {
+      threadId,
+      fromTurnCount: 1,
+      toTurnCount: 2,
+      cacheScope: "turn:shared",
+    } as const;
+
+    expect(providerQueryKeys.checkpointDiff({ ...baseInput, serverId: "default" })).not.toEqual(
+      providerQueryKeys.checkpointDiff({ ...baseInput, serverId: "remote-1" }),
+    );
+  });
+
   it("includes cacheScope so reused turn counts do not collide", () => {
     const baseInput = {
       threadId,

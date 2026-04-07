@@ -86,6 +86,7 @@ export interface Project {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
+  serverId: string;
 }
 
 export interface Thread {
@@ -109,6 +110,7 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  serverId: string;
 }
 
 export interface SidebarThreadSummary {
@@ -127,6 +129,7 @@ export interface SidebarThreadSummary {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  serverId: string;
 }
 
 export interface ThreadSession {

@@ -47,6 +47,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          printReadyJson: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -88,6 +89,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         authToken: "env-token",
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
+        printReadyJson: false,
       });
     }),
   );
@@ -110,6 +112,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.some(true),
           logWebSocketEvents: Option.some(true),
+          printReadyJson: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -151,6 +154,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         authToken: "flag-token",
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
+        printReadyJson: false,
       });
     }),
   );
@@ -187,6 +191,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          printReadyJson: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -221,6 +226,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         authToken: "bootstrap-token",
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: true,
+        printReadyJson: false,
       });
       assert.equal(join(baseDir, "dev"), resolved.stateDir);
     }),
@@ -246,6 +252,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          printReadyJson: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -304,6 +311,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          printReadyJson: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -341,6 +349,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         authToken: "flag-token",
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
+        printReadyJson: false,
       });
     }),
   );
@@ -375,6 +384,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           bootstrapFd: Option.none(),
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
+          printReadyJson: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -405,6 +415,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         authToken: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
+        printReadyJson: false,
       });
     }),
   );

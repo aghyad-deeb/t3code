@@ -116,7 +116,7 @@ import {
 } from "~/projectScripts";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
-import { readNativeApi } from "~/nativeApi";
+import { useActiveApi } from "~/connections/activeServerContext";
 import {
   getProviderModelCapabilities,
   getProviderModels,
@@ -428,6 +428,7 @@ function PersistentThreadTerminalDrawer({
   closeShortcutLabel,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
+  const api = useActiveApi();
   const serverThread = useThreadById(threadId);
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
@@ -505,8 +506,6 @@ function PersistentThreadTerminalDrawer({
 
   const closeTerminal = useCallback(
     (terminalId: string) => {
-      const api = readNativeApi();
-      if (!api) return;
       const isFinalTerminal = terminalState.terminalIds.length <= 1;
       const fallbackExitWrite = () =>
         api.terminal.write({ threadId, terminalId, data: "exit\n" }).catch(() => undefined);
@@ -529,7 +528,7 @@ function PersistentThreadTerminalDrawer({
       storeCloseTerminal(threadId, terminalId);
       bumpFocusRequestId();
     },
-    [bumpFocusRequestId, storeCloseTerminal, terminalState.terminalIds.length, threadId],
+    [api, bumpFocusRequestId, storeCloseTerminal, terminalState.terminalIds.length, threadId],
   );
 
   const handleAddTerminalContext = useCallback(
@@ -575,6 +574,7 @@ function PersistentThreadTerminalDrawer({
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
+  const api = useActiveApi();
   const serverThread = useThreadById(threadId);
   const setStoreThreadError = useStore((store) => store.setError);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
@@ -1399,7 +1399,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
-  const gitStatusQuery = useQuery(gitStatusQueryOptions(gitCwd));
+  const gitStatusQuery = useQuery(
+    gitStatusQueryOptions(gitCwd, api, activeThread?.serverId ?? "default"),
+  );
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   const modelOptionsByProvider = useMemo(
@@ -1439,6 +1441,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       query: effectivePathQuery,
       enabled: isPathTrigger,
       limit: 80,
+      api,
+      serverId: activeThread?.serverId ?? "default",
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
@@ -1694,8 +1698,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [activeThreadId, storeNewTerminal]);
   const closeTerminal = useCallback(
     (terminalId: string) => {
-      const api = readNativeApi();
-      if (!activeThreadId || !api) return;
+      if (!activeThreadId) return;
       const isFinalTerminal = terminalState.terminalIds.length <= 1;
       const fallbackExitWrite = () =>
         api.terminal
@@ -1720,7 +1723,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       storeCloseTerminal(activeThreadId, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeThreadId, storeCloseTerminal, terminalState.terminalIds.length],
+    [api, activeThreadId, storeCloseTerminal, terminalState.terminalIds.length],
   );
   const runProjectScript = useCallback(
     async (
@@ -1733,8 +1736,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         rememberAsLastInvoked?: boolean;
       },
     ) => {
-      const api = readNativeApi();
-      if (!api || !activeThreadId || !activeProject || !activeThread) return;
+      if (!activeThreadId || !activeProject || !activeThread) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
           if (current[activeProject.id] === script.id) return current;
@@ -1807,6 +1809,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     },
     [
+      api,
       activeProject,
       activeThread,
       activeThreadId,
@@ -1831,9 +1834,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand;
     }) => {
-      const api = readNativeApi();
-      if (!api) return;
-
       await api.orchestration.dispatchCommand({
         type: "project.meta.update",
         commandId: newCommandId(),
@@ -1850,7 +1850,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         await api.server.upsertKeybinding(keybindingRule);
       }
     },
-    [],
+    [api],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {
@@ -2021,11 +2021,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!serverThread) {
         return;
       }
-      const api = readNativeApi();
-      if (!api) {
-        return;
-      }
-
       if (
         input.modelSelection !== undefined &&
         (input.modelSelection.model !== serverThread.modelSelection.model ||
@@ -2061,7 +2056,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
     },
-    [serverThread],
+    [api, serverThread],
   );
 
   // Auto-scroll on new messages
@@ -2807,8 +2802,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
-      const api = readNativeApi();
-      if (!api || !activeThread || isRevertingCheckpoint) return;
+      if (!activeThread || isRevertingCheckpoint) return;
 
       if (phase === "running" || isSendBusy || isConnecting) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
@@ -2843,13 +2837,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setIsRevertingCheckpoint(false);
     },
-    [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
+    [api, activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
-    const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (!activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -3128,8 +3121,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   };
 
   const onInterrupt = async () => {
-    const api = readNativeApi();
-    if (!api || !activeThread) return;
+    if (!activeThread) return;
     await api.orchestration.dispatchCommand({
       type: "thread.turn.interrupt",
       commandId: newCommandId(),
@@ -3140,8 +3132,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
-      const api = readNativeApi();
-      if (!api || !activeThreadId) return;
+      if (!activeThreadId) return;
 
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
@@ -3163,13 +3154,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [activeThreadId, setThreadError],
+    [api, activeThreadId, setThreadError],
   );
 
   const onRespondToUserInput = useCallback(
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
-      const api = readNativeApi();
-      if (!api || !activeThreadId) return;
+      if (!activeThreadId) return;
 
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
@@ -3191,7 +3181,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
-    [activeThreadId, setThreadError],
+    [api, activeThreadId, setThreadError],
   );
 
   const setActivePendingUserInputQuestionIndex = useCallback(
@@ -3293,9 +3283,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       text: string;
       interactionMode: "default" | "plan";
     }) => {
-      const api = readNativeApi();
       if (
-        !api ||
         !activeThread ||
         !isServerThread ||
         isSendBusy ||
@@ -3395,6 +3383,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     },
     [
+      api,
       activeThread,
       activeProposedPlan,
       beginLocalDispatch,
@@ -3416,9 +3405,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const onImplementPlanInNewThread = useCallback(async () => {
-    const api = readNativeApi();
     if (
-      !api ||
       !activeThread ||
       !activeProject ||
       !activeProposedPlan ||
@@ -3515,6 +3502,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       })
       .then(finish, finish);
   }, [
+    api,
     activeProject,
     activeProposedPlan,
     activeThread,

@@ -1,4 +1,5 @@
 import type {
+  GitActionProgressEvent,
   GitCheckoutInput,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
@@ -13,6 +14,8 @@ import type {
   GitPullResult,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
+  GitRunStackedActionInput,
+  GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
 } from "./git";
@@ -103,6 +106,26 @@ export interface DesktopUpdateCheckResult {
   state: DesktopUpdateState;
 }
 
+export interface SshHostConfig {
+  id: string;
+  label: string;
+  host: string;
+  user: string;
+  port: number;
+  identityFile?: string;
+  remoteProjectPath: string;
+  remoteServerPort: number;
+  remoteBinary?: string;
+}
+
+export interface SshConnectResult {
+  wsUrl: string;
+  authToken: string;
+  localPort: number;
+  remotePort: number;
+  remotePid: number | null;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -119,6 +142,10 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  sshConnect: (config: SshHostConfig) => Promise<SshConnectResult>;
+  sshDisconnect: (id: string) => Promise<void>;
+  sshListHosts: () => Promise<SshHostConfig[]>;
+  sshSaveHost: (config: SshHostConfig) => Promise<void>;
 }
 
 export interface NativeApi {
@@ -158,6 +185,10 @@ export interface NativeApi {
     // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
+    runStackedAction: (
+      input: GitRunStackedActionInput,
+      options?: { onProgress?: (event: GitActionProgressEvent) => void },
+    ) => Promise<GitRunStackedActionResult>;
   };
   contextMenu: {
     show: <T extends string>(

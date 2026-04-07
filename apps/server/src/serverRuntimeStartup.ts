@@ -358,6 +358,16 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
         }),
       );
 
+      if (serverConfig.printReadyJson) {
+        const readyPayload = JSON.stringify({
+          ready: true,
+          port: serverConfig.port,
+          host: serverConfig.host ?? "127.0.0.1",
+          pid: process.pid,
+        });
+        process.stdout.write(readyPayload + "\n");
+      }
+
       yield* Effect.logDebug("startup phase: recording startup heartbeat");
       yield* launchStartupHeartbeat;
       yield* Effect.logDebug("startup phase: browser open check");

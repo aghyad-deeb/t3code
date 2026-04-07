@@ -81,6 +81,12 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
+const printReadyJsonFlag = Flag.boolean("print-ready-json").pipe(
+  Flag.withDescription(
+    "Print a JSON line to stdout when the server is ready, then continue running.",
+  ),
+  Flag.optional,
+);
 
 const EnvServerConfig = Config.all({
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
@@ -133,6 +139,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  printReadyJson: Config.boolean("T3CODE_PRINT_READY_JSON").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 interface CliServerFlags {
@@ -147,6 +157,7 @@ interface CliServerFlags {
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
+  readonly printReadyJson: Option.Option<boolean>;
 }
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
@@ -281,6 +292,7 @@ export const resolveServerConfig = (
         () => Boolean(devUrl),
       ),
     );
+    const printReadyJson = resolveBooleanFlag(flags.printReadyJson, env.printReadyJson ?? false);
     const staticDir = devUrl ? undefined : yield* resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -330,6 +342,7 @@ export const resolveServerConfig = (
       authToken,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
+      printReadyJson,
     };
 
     return config;
@@ -352,6 +365,7 @@ const commandFlags = {
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
+  printReadyJson: printReadyJsonFlag,
 } as const;
 
 const rootCommand = Command.make("t3", commandFlags).pipe(

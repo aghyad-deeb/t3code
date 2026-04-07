@@ -5,10 +5,6 @@ vi.mock("../nativeApi", () => ({
   ensureNativeApi: vi.fn(),
 }));
 
-vi.mock("../wsRpcClient", () => ({
-  getWsRpcClient: vi.fn(),
-}));
-
 import type { InfiniteData } from "@tanstack/react-query";
 import type { GitListBranchesResult } from "@t3tools/contracts";
 
@@ -41,6 +37,12 @@ describe("gitMutationKeys", () => {
   it("scopes stacked action keys by cwd", () => {
     expect(gitMutationKeys.runStackedAction("/repo/a")).not.toEqual(
       gitMutationKeys.runStackedAction("/repo/b"),
+    );
+  });
+
+  it("scopes stacked action keys by serverId for the same cwd", () => {
+    expect(gitMutationKeys.runStackedAction("/repo/a", "default")).not.toEqual(
+      gitMutationKeys.runStackedAction("/repo/a", "remote-a"),
     );
   });
 

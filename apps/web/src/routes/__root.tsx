@@ -10,7 +10,7 @@ import {
   useNavigate,
   useLocation,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useSyncExternalStore } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 
@@ -23,8 +23,15 @@ import {
 } from "../components/WebSocketConnectionSurface";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
+import {
+  getAllConnections,
+  getConnectionRegistryRevision,
+  subscribeConnectionRegistry,
+} from "../connections/connectionRegistry";
+import { ActiveServerProvider } from "../connections/activeServerContext";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readNativeApi } from "../nativeApi";
+import { useActiveApi } from "../connections/activeServerContext";
 import {
   getServerConfigUpdatedNotification,
   ServerConfigUpdatedNotification,
@@ -208,6 +215,30 @@ function ServerStateBootstrap() {
 }
 
 function EventRouter() {
+  const registryRevision = useSyncExternalStore(
+    subscribeConnectionRegistry,
+    getConnectionRegistryRevision,
+    getConnectionRegistryRevision,
+  );
+  const connectionEntries = useMemo(() => {
+    void registryRevision;
+    return getAllConnections();
+  }, [registryRevision]);
+  return (
+    <>
+      {connectionEntries.map((entry) => (
+        <ActiveServerProvider key={entry.id} connection={entry}>
+          <ServerEventSubscription serverId={entry.id} />
+        </ActiveServerProvider>
+      ))}
+    </>
+  );
+}
+
+function ServerEventSubscription({ serverId }: { serverId: string }) {
+  const api = useActiveApi();
+  const apiRef = useRef(api);
+  apiRef.current = api;
   const applyOrchestrationEvents = useStore((store) => store.applyOrchestrationEvents);
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -232,7 +263,7 @@ function EventRouter() {
   const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
     if (!payload) return;
 
-    migrateLocalSettingsToServer();
+    migrateLocalSettingsToServer(apiRef.current);
     void (async () => {
       await bootstrapFromSnapshotRef.current();
       if (disposedRef.current) {
@@ -289,11 +320,6 @@ function EventRouter() {
         actionProps: {
           children: "Open keybindings.json",
           onClick: () => {
-            const api = readNativeApi();
-            if (!api) {
-              return;
-            }
-
             void Promise.resolve(serverConfig ?? api.server.getConfig())
               .then((config) => {
                 const editor = resolveAndPersistPreferredEditor(config.availableEditors);
@@ -317,8 +343,6 @@ function EventRouter() {
   );
 
   useEffect(() => {
-    const api = readNativeApi();
-    if (!api) return;
     let disposed = false;
     disposedRef.current = false;
     const recovery = createOrchestrationRecoveryCoordinator();
@@ -390,7 +414,7 @@ function EventRouter() {
         void queryInvalidationThrottler.maybeExecute();
       }
 
-      applyOrchestrationEvents(uiEvents);
+      applyOrchestrationEvents(uiEvents, serverId);
       if (needsProjectUiSync) {
         const projects = useStore.getState().projects;
         syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
@@ -511,7 +535,7 @@ function EventRouter() {
       try {
         const snapshot = await api.orchestration.getSnapshot();
         if (!disposed) {
-          syncServerReadModel(snapshot);
+          syncServerReadModel(snapshot, serverId);
           reconcileSnapshotDerivedState();
           if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
             void runReplayRecovery("sequence-gap");
@@ -572,6 +596,7 @@ function EventRouter() {
       unsubTerminalEvent();
     };
   }, [
+    api,
     applyOrchestrationEvents,
     navigate,
     queryClient,
@@ -579,6 +604,7 @@ function EventRouter() {
     removeOrphanedTerminalStates,
     applyTerminalEvent,
     clearThreadUi,
+    serverId,
     setProjectExpanded,
     syncProjects,
     syncServerReadModel,

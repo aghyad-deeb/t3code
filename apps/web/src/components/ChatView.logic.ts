@@ -41,6 +41,7 @@ export function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    serverId: "default",
   };
 }
 

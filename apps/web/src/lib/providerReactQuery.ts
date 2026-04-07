@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { queryOptions } from "@tanstack/react-query";
 import { Option, Schema } from "effect";
+import type { NativeApi } from "@t3tools/contracts";
 import { ensureNativeApi } from "../nativeApi";
 
 interface CheckpointDiffQueryInput {
@@ -13,6 +14,8 @@ interface CheckpointDiffQueryInput {
   toTurnCount: number | null;
   cacheScope?: string | null;
   enabled?: boolean;
+  /** Client connection id; avoids cache collisions across WebSocket backends. */
+  serverId?: string;
 }
 
 export const providerQueryKeys = {
@@ -21,6 +24,7 @@ export const providerQueryKeys = {
     [
       "providers",
       "checkpointDiff",
+      input.serverId ?? "default",
       input.threadId,
       input.fromTurnCount,
       input.toTurnCount,
@@ -89,13 +93,13 @@ function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
   );
 }
 
-export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
+export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput & { api?: NativeApi }) {
   const decodedRequest = decodeCheckpointDiffRequest(input);
 
   return queryOptions({
     queryKey: providerQueryKeys.checkpointDiff(input),
     queryFn: async () => {
-      const api = ensureNativeApi();
+      const api = input.api ?? ensureNativeApi();
       if (!input.threadId || decodedRequest._tag === "None") {
         throw new Error("Checkpoint diff is unavailable.");
       }

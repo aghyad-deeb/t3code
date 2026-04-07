@@ -1,5 +1,15 @@
-import { Outlet, createFileRoute } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { ThreadId } from "@t3tools/contracts";
+import { Outlet, createFileRoute, useParams } from "@tanstack/react-router";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+
+import { ActiveServerProvider } from "../connections/activeServerContext";
+import {
+  getConnection,
+  getConnectionRegistryRevision,
+  getDefaultConnection,
+  subscribeConnectionRegistry,
+} from "../connections/connectionRegistry";
+import { selectThreadById, useStore } from "../store";
 
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -87,11 +97,28 @@ function ChatRouteGlobalShortcuts() {
 }
 
 function ChatRouteLayout() {
+  const routeThreadId = useParams({
+    strict: false,
+    select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
+  });
+  const serverId = useStore(
+    (s) => (routeThreadId ? selectThreadById(routeThreadId)(s)?.serverId : null) ?? "default",
+  );
+  const registryRevision = useSyncExternalStore(
+    subscribeConnectionRegistry,
+    getConnectionRegistryRevision,
+    getConnectionRegistryRevision,
+  );
+  const connection = useMemo(() => {
+    void registryRevision;
+    return getConnection(serverId) ?? getDefaultConnection();
+  }, [registryRevision, serverId]);
+
   return (
-    <>
+    <ActiveServerProvider connection={connection}>
       <ChatRouteGlobalShortcuts />
       <Outlet />
-    </>
+    </ActiveServerProvider>
   );
 }
 

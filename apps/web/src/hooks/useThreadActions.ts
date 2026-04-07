@@ -8,7 +8,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "./useHandleNewThread";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
 import { newCommandId } from "../lib/utils";
-import { readNativeApi } from "../nativeApi";
+import { useActiveApi } from "../connections/activeServerContext";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
@@ -16,6 +16,7 @@ import { toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
 
 export function useThreadActions() {
+  const api = useActiveApi();
   const appSettings = useSettings();
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
@@ -33,8 +34,6 @@ export function useThreadActions() {
 
   const archiveThread = useCallback(
     async (threadId: ThreadId) => {
-      const api = readNativeApi();
-      if (!api) return;
       const thread = useStore.getState().threads.find((entry) => entry.id === threadId);
       if (!thread) return;
       if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
@@ -51,23 +50,22 @@ export function useThreadActions() {
         await handleNewThread(thread.projectId);
       }
     },
-    [handleNewThread, routeThreadId],
+    [api, handleNewThread, routeThreadId],
   );
 
-  const unarchiveThread = useCallback(async (threadId: ThreadId) => {
-    const api = readNativeApi();
-    if (!api) return;
-    await api.orchestration.dispatchCommand({
-      type: "thread.unarchive",
-      commandId: newCommandId(),
-      threadId,
-    });
-  }, []);
+  const unarchiveThread = useCallback(
+    async (threadId: ThreadId) => {
+      await api.orchestration.dispatchCommand({
+        type: "thread.unarchive",
+        commandId: newCommandId(),
+        threadId,
+      });
+    },
+    [api],
+  );
 
   const deleteThread = useCallback(
     async (threadId: ThreadId, opts: { deletedThreadIds?: ReadonlySet<ThreadId> } = {}) => {
-      const api = readNativeApi();
-      if (!api) return;
       const { projects, threads } = useStore.getState();
       const thread = threads.find((entry) => entry.id === threadId);
       if (!thread) return;
@@ -165,6 +163,7 @@ export function useThreadActions() {
       }
     },
     [
+      api,
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
       clearTerminalState,
@@ -177,8 +176,6 @@ export function useThreadActions() {
 
   const confirmAndDeleteThread = useCallback(
     async (threadId: ThreadId) => {
-      const api = readNativeApi();
-      if (!api) return;
       const thread = useStore.getState().threads.find((entry) => entry.id === threadId);
       if (!thread) return;
 
@@ -196,7 +193,7 @@ export function useThreadActions() {
 
       await deleteThread(threadId);
     },
-    [appSettings.confirmThreadDelete, deleteThread],
+    [api, appSettings.confirmThreadDelete, deleteThread],
   );
 
   return {

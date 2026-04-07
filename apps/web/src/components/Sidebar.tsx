@@ -70,10 +70,13 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
+import { getConnection } from "../connections/connectionRegistry";
 import { gitStatusQueryOptions } from "../lib/gitReactQuery";
-import { readNativeApi } from "../nativeApi";
+import { buildNativeApiFromRpcClient, createWsNativeApi } from "../wsNativeApi";
+import { useActiveApi } from "../connections/activeServerContext";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useServerConnectionStore, type ServerConnectionInfo } from "../serverConnectionStore";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { toastManager } from "./ui/toast";
@@ -628,6 +631,16 @@ function ProjectSortMenu({
   );
 }
 
+function ServerStatusDot({ status }: { status: ServerConnectionInfo["status"] }) {
+  const colorClass =
+    status === "connected"
+      ? "bg-emerald-500"
+      : status === "connecting"
+        ? "bg-amber-400 animate-pulse"
+        : "bg-zinc-400";
+  return <span className={`inline-block size-1.5 rounded-full ${colorClass}`} />;
+}
+
 function SortableProjectItem({
   projectId,
   disabled = false,
@@ -666,6 +679,8 @@ function SortableProjectItem({
 }
 
 export default function Sidebar() {
+  const api = useActiveApi();
+  const serverConnections = useServerConnectionStore((s) => s.connections);
   const projects = useStore((store) => store.projects);
   const sidebarThreadsById = useStore((store) => store.sidebarThreadsById);
   const threadIdsByProjectId = useStore((store) => store.threadIdsByProjectId);
@@ -766,71 +781,80 @@ export default function Sidebar() {
     () =>
       sidebarThreads.map((thread) => ({
         threadId: thread.id,
+        serverId: thread.serverId,
         branch: thread.branch,
         cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
       })),
     [projectCwdById, sidebarThreads],
   );
-  const threadGitStatusCwds = useMemo(
-    () => [
-      ...new Set(
-        threadGitTargets
-          .filter((target) => target.branch !== null)
-          .map((target) => target.cwd)
-          .filter((cwd): cwd is string => cwd !== null),
-      ),
-    ],
-    [threadGitTargets],
-  );
+  const threadGitStatusKeys = useMemo(() => {
+    const seen = new Set<string>();
+    const keys: { cwd: string; serverId: string }[] = [];
+    for (const target of threadGitTargets) {
+      if (target.branch === null || target.cwd === null) continue;
+      const dedupe = `${target.serverId}\0${target.cwd}`;
+      if (seen.has(dedupe)) continue;
+      seen.add(dedupe);
+      keys.push({ cwd: target.cwd, serverId: target.serverId });
+    }
+    return keys;
+  }, [threadGitTargets]);
   const threadGitStatusQueries = useQueries({
-    queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
-      staleTime: 30_000,
-      refetchInterval: 60_000,
-    })),
+    queries: threadGitStatusKeys.map(({ cwd, serverId }) => {
+      const gitApi =
+        serverId === "default"
+          ? createWsNativeApi()
+          : (() => {
+              const entry = getConnection(serverId);
+              return entry ? buildNativeApiFromRpcClient(entry.rpcClient) : undefined;
+            })();
+      const hasGitBackend = gitApi !== undefined;
+      return {
+        ...gitStatusQueryOptions(cwd, gitApi ?? createWsNativeApi(), serverId),
+        enabled: hasGitBackend,
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+      };
+    }),
   });
   const prByThreadId = useMemo(() => {
-    const statusByCwd = new Map<string, GitStatusResult>();
-    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
-      const cwd = threadGitStatusCwds[index];
-      if (!cwd) continue;
+    const statusByServerCwd = new Map<string, GitStatusResult>();
+    for (let index = 0; index < threadGitStatusKeys.length; index += 1) {
+      const { cwd, serverId } = threadGitStatusKeys[index]!;
       const status = threadGitStatusQueries[index]?.data;
       if (status) {
-        statusByCwd.set(cwd, status);
+        statusByServerCwd.set(`${serverId}\0${cwd}`, status);
       }
     }
 
     const map = new Map<ThreadId, ThreadPr>();
     for (const target of threadGitTargets) {
-      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
+      const status =
+        target.cwd !== null
+          ? statusByServerCwd.get(`${target.serverId}\0${target.cwd}`)
+          : undefined;
       const branchMatches =
         target.branch !== null && status?.branch !== null && status?.branch === target.branch;
       map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
     }
     return map;
-  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  }, [threadGitStatusKeys, threadGitStatusQueries, threadGitTargets]);
 
-  const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const openPrLink = useCallback(
+    (event: MouseEvent<HTMLElement>, prUrl: string) => {
+      event.preventDefault();
+      event.stopPropagation();
 
-    const api = readNativeApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Link opening is unavailable.",
+      void api.shell.openExternal(prUrl).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open PR link",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
       });
-      return;
-    }
-
-    void api.shell.openExternal(prUrl).catch((error) => {
-      toastManager.add({
-        type: "error",
-        title: "Unable to open PR link",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    });
-  }, []);
+    },
+    [api],
+  );
 
   const attemptArchiveThread = useCallback(
     async (threadId: ThreadId) => {
@@ -870,8 +894,6 @@ export default function Sidebar() {
     async (rawCwd: string) => {
       const cwd = rawCwd.trim();
       if (!cwd || isAddingProject) return;
-      const api = readNativeApi();
-      if (!api) return;
 
       setIsAddingProject(true);
       const finishAddingProject = () => {
@@ -927,6 +949,7 @@ export default function Sidebar() {
     [
       focusMostRecentThreadForProject,
       handleNewThread,
+      api,
       isAddingProject,
       projects,
       shouldBrowseForProjectImmediately,
@@ -941,8 +964,7 @@ export default function Sidebar() {
   const canAddProject = newCwd.trim().length > 0 && !isAddingProject;
 
   const handlePickFolder = async () => {
-    const api = readNativeApi();
-    if (!api || isPickingFolder) return;
+    if (isPickingFolder) return;
     setIsPickingFolder(true);
     let pickedPath: string | null = null;
     try {
@@ -995,11 +1017,6 @@ export default function Sidebar() {
         finishRename();
         return;
       }
-      const api = readNativeApi();
-      if (!api) {
-        finishRename();
-        return;
-      }
       try {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
@@ -1016,7 +1033,7 @@ export default function Sidebar() {
       }
       finishRename();
     },
-    [],
+    [api],
   );
 
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
@@ -1057,8 +1074,6 @@ export default function Sidebar() {
   });
   const handleThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
-      const api = readNativeApi();
-      if (!api) return;
       const thread = sidebarThreadsById[threadId];
       if (!thread) return;
       const threadWorkspacePath =
@@ -1116,6 +1131,7 @@ export default function Sidebar() {
       await deleteThread(threadId);
     },
     [
+      api,
       appSettings.confirmThreadDelete,
       copyPathToClipboard,
       copyThreadIdToClipboard,
@@ -1128,8 +1144,6 @@ export default function Sidebar() {
 
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
-      const api = readNativeApi();
-      if (!api) return;
       const ids = [...selectedThreadIds];
       if (ids.length === 0) return;
       const count = ids.length;
@@ -1170,6 +1184,7 @@ export default function Sidebar() {
       removeFromSelection(ids);
     },
     [
+      api,
       appSettings.confirmThreadDelete,
       clearSelection,
       deleteThread,
@@ -1234,8 +1249,6 @@ export default function Sidebar() {
 
   const handleProjectContextMenu = useCallback(
     async (projectId: ProjectId, position: { x: number; y: number }) => {
-      const api = readNativeApi();
-      if (!api) return;
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
 
@@ -1287,6 +1300,7 @@ export default function Sidebar() {
       }
     },
     [
+      api,
       clearComposerDraftForThread,
       clearProjectDraftThreadId,
       copyPathToClipboard,
@@ -1457,6 +1471,22 @@ export default function Sidebar() {
       threadLastVisitedAtById,
     ],
   );
+  const serverGroups = useMemo(() => {
+    const groups = new Map<string, (typeof renderedProjects)[number][]>();
+    for (const rp of renderedProjects) {
+      const sid = rp.project.serverId ?? "default";
+      const list = groups.get(sid) ?? [];
+      list.push(rp);
+      groups.set(sid, list);
+    }
+    return Array.from(groups.entries()).map(([sid, rps]) => ({
+      serverId: sid,
+      connection: serverConnections.find((c) => c.id === sid),
+      renderedProjects: rps,
+    }));
+  }, [renderedProjects, serverConnections]);
+  const hasMultipleServers = serverGroups.length > 1;
+
   const visibleSidebarThreadIds = useMemo(
     () => getVisibleSidebarThreadIds(renderedProjects),
     [renderedProjects],
@@ -2127,40 +2157,66 @@ export default function Sidebar() {
                 </div>
               )}
 
-              {isManualProjectSorting ? (
-                <DndContext
-                  sensors={projectDnDSensors}
-                  collisionDetection={projectCollisionDetection}
-                  modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-                  onDragStart={handleProjectDragStart}
-                  onDragEnd={handleProjectDragEnd}
-                  onDragCancel={handleProjectDragCancel}
-                >
-                  <SidebarMenu>
-                    <SortableContext
-                      items={renderedProjects.map((renderedProject) => renderedProject.project.id)}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {renderedProjects.map((renderedProject) => (
-                        <SortableProjectItem
-                          key={renderedProject.project.id}
-                          projectId={renderedProject.project.id}
+              {serverGroups.map((group) => {
+                const isDisconnected =
+                  group.connection?.status === "disconnected" ||
+                  group.connection?.status === "error";
+                const groupWrapperClass = isDisconnected ? "opacity-40 pointer-events-none" : "";
+
+                return (
+                  <div key={group.serverId}>
+                    {hasMultipleServers && (
+                      <div className="mb-1 mt-2 flex items-center gap-1.5 px-2">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                          {group.connection?.label ?? group.serverId}
+                        </span>
+                        {group.connection && <ServerStatusDot status={group.connection.status} />}
+                      </div>
+                    )}
+                    <div className={groupWrapperClass}>
+                      {isManualProjectSorting ? (
+                        <DndContext
+                          sensors={projectDnDSensors}
+                          collisionDetection={projectCollisionDetection}
+                          modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                          onDragStart={handleProjectDragStart}
+                          onDragEnd={handleProjectDragEnd}
+                          onDragCancel={handleProjectDragCancel}
                         >
-                          {(dragHandleProps) => renderProjectItem(renderedProject, dragHandleProps)}
-                        </SortableProjectItem>
-                      ))}
-                    </SortableContext>
-                  </SidebarMenu>
-                </DndContext>
-              ) : (
-                <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-                  {renderedProjects.map((renderedProject) => (
-                    <SidebarMenuItem key={renderedProject.project.id} className="rounded-md">
-                      {renderProjectItem(renderedProject, null)}
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              )}
+                          <SidebarMenu>
+                            <SortableContext
+                              items={group.renderedProjects.map((rp) => rp.project.id)}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              {group.renderedProjects.map((renderedProject) => (
+                                <SortableProjectItem
+                                  key={renderedProject.project.id}
+                                  projectId={renderedProject.project.id}
+                                >
+                                  {(dragHandleProps) =>
+                                    renderProjectItem(renderedProject, dragHandleProps)
+                                  }
+                                </SortableProjectItem>
+                              ))}
+                            </SortableContext>
+                          </SidebarMenu>
+                        </DndContext>
+                      ) : (
+                        <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+                          {group.renderedProjects.map((renderedProject) => (
+                            <SidebarMenuItem
+                              key={renderedProject.project.id}
+                              className="rounded-md"
+                            >
+                              {renderProjectItem(renderedProject, null)}
+                            </SidebarMenuItem>
+                          ))}
+                        </SidebarMenu>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
 
               {projects.length === 0 && !shouldShowProjectPathEntry && (
                 <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">

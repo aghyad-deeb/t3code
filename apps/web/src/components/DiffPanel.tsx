@@ -22,7 +22,7 @@ import { openInPreferredEditor } from "../editorPreferences";
 import { gitStatusQueryOptions } from "~/lib/gitReactQuery";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
-import { readNativeApi } from "../nativeApi";
+import { useActiveApi } from "../connections/activeServerContext";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
@@ -164,6 +164,7 @@ interface DiffPanelProps {
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+  const api = useActiveApi();
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
@@ -189,7 +190,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
-  const gitStatusQuery = useQuery(gitStatusQueryOptions(activeCwd ?? null));
+  const gitStatusQuery = useQuery(
+    gitStatusQueryOptions(activeCwd ?? null, api, activeThread?.serverId ?? "default"),
+  );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
@@ -267,6 +270,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
       enabled: isGitRepo,
+      api,
+      serverId: activeThread?.serverId ?? "default",
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -321,14 +326,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {
-      const api = readNativeApi();
-      if (!api) return;
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
       void openInPreferredEditor(api, targetPath).catch((error) => {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
-    [activeCwd],
+    [api, activeCwd],
   );
 
   const selectTurn = (turnId: TurnId) => {

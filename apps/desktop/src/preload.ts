@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, SshHostConfig } from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -13,6 +13,10 @@ const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const SSH_CONNECT_CHANNEL = "desktop:ssh-connect";
+const SSH_DISCONNECT_CHANNEL = "desktop:ssh-disconnect";
+const SSH_LIST_HOSTS_CHANNEL = "desktop:ssh-list-hosts";
+const SSH_SAVE_HOST_CHANNEL = "desktop:ssh-save-host";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => {
@@ -50,4 +54,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener);
     };
   },
+  sshConnect: (config: SshHostConfig) => ipcRenderer.invoke(SSH_CONNECT_CHANNEL, config),
+  sshDisconnect: (id: string) => ipcRenderer.invoke(SSH_DISCONNECT_CHANNEL, id),
+  sshListHosts: () => ipcRenderer.invoke(SSH_LIST_HOSTS_CHANNEL),
+  sshSaveHost: (config: SshHostConfig) => ipcRenderer.invoke(SSH_SAVE_HOST_CHANNEL, config),
 } satisfies DesktopBridge);

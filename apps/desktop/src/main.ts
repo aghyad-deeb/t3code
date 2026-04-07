@@ -29,7 +29,10 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+import type { SshHostConfig, SshConnectResult } from "@t3tools/contracts";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import type { SshTunnel } from "./sshTunnel";
+import { startSshTunnel } from "./sshTunnel";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -60,6 +63,10 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const SSH_CONNECT_CHANNEL = "desktop:ssh-connect";
+const SSH_DISCONNECT_CHANNEL = "desktop:ssh-disconnect";
+const SSH_LIST_HOSTS_CHANNEL = "desktop:ssh-list-hosts";
+const SSH_SAVE_HOST_CHANNEL = "desktop:ssh-save-host";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -98,6 +105,10 @@ let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
+const activeSshTunnels = new Map<string, SshTunnel>();
+/** Serializes `sshConnect` per host id so concurrent invokes cannot spawn orphan SSH children. */
+const sshConnectInFlightByHostId = new Map<string, Promise<SshConnectResult>>();
+const SSH_HOSTS_FILE = Path.join(STATE_DIR, "ssh-hosts.json");
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
@@ -112,6 +123,49 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
 });
 const initialUpdateState = (): DesktopUpdateState =>
   createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
+
+async function performSshConnect(config: SshHostConfig): Promise<SshConnectResult> {
+  const previousTunnel = activeSshTunnels.get(config.id);
+  if (previousTunnel) {
+    previousTunnel.stop();
+    activeSshTunnels.delete(config.id);
+  }
+
+  const localPort = await Effect.service(NetService).pipe(
+    Effect.flatMap((net) => net.reserveLoopbackPort()),
+    Effect.provide(NetService.layer),
+    Effect.runPromise,
+  );
+
+  const tunnel = await startSshTunnel(
+    {
+      host: config.host,
+      user: config.user,
+      port: config.port,
+      identityFile: config.identityFile,
+      remoteProjectPath: config.remoteProjectPath,
+      remoteServerPort: config.remoteServerPort,
+      remoteBinary: config.remoteBinary,
+    },
+    localPort,
+  );
+
+  activeSshTunnels.set(config.id, tunnel);
+
+  tunnel.onExit(() => {
+    if (activeSshTunnels.get(config.id) === tunnel) {
+      activeSshTunnels.delete(config.id);
+    }
+  });
+
+  return {
+    wsUrl: tunnel.result.wsUrl,
+    authToken: tunnel.result.authToken,
+    localPort: tunnel.result.localPort,
+    remotePort: tunnel.result.remotePort,
+    remotePid: tunnel.result.remotePid,
+  } satisfies SshConnectResult;
+}
 
 function logTimestamp(): string {
   return new Date().toISOString();
@@ -1328,6 +1382,64 @@ function registerIpcHandlers(): void {
       state: updateState,
     } satisfies DesktopUpdateCheckResult;
   });
+
+  ipcMain.removeHandler(SSH_CONNECT_CHANNEL);
+  ipcMain.handle(SSH_CONNECT_CHANNEL, async (_event, config: SshHostConfig) => {
+    const inFlight = sshConnectInFlightByHostId.get(config.id);
+    if (inFlight) {
+      return inFlight;
+    }
+    const promise = performSshConnect(config).finally(() => {
+      sshConnectInFlightByHostId.delete(config.id);
+    });
+    sshConnectInFlightByHostId.set(config.id, promise);
+    return promise;
+  });
+
+  ipcMain.removeHandler(SSH_DISCONNECT_CHANNEL);
+  ipcMain.handle(SSH_DISCONNECT_CHANNEL, async (_event, id: string) => {
+    const tunnel = activeSshTunnels.get(id);
+    if (tunnel) {
+      tunnel.stop();
+      activeSshTunnels.delete(id);
+    }
+  });
+
+  ipcMain.removeHandler(SSH_LIST_HOSTS_CHANNEL);
+  ipcMain.handle(SSH_LIST_HOSTS_CHANNEL, async () => {
+    try {
+      if (!FS.existsSync(SSH_HOSTS_FILE)) return [];
+      const raw = FS.readFileSync(SSH_HOSTS_FILE, "utf8");
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.removeHandler(SSH_SAVE_HOST_CHANNEL);
+  ipcMain.handle(SSH_SAVE_HOST_CHANNEL, async (_event, config: SshHostConfig) => {
+    let hosts: SshHostConfig[] = [];
+    try {
+      if (FS.existsSync(SSH_HOSTS_FILE)) {
+        const raw = FS.readFileSync(SSH_HOSTS_FILE, "utf8");
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) hosts = parsed;
+      }
+    } catch {
+      // Ignore read errors, start fresh
+    }
+
+    const existingIndex = hosts.findIndex((h) => h.id === config.id);
+    if (existingIndex >= 0) {
+      hosts[existingIndex] = config;
+    } else {
+      hosts.push(config);
+    }
+
+    FS.mkdirSync(Path.dirname(SSH_HOSTS_FILE), { recursive: true });
+    FS.writeFileSync(SSH_HOSTS_FILE, JSON.stringify(hosts, null, 2), "utf8");
+  });
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
@@ -1454,6 +1566,10 @@ app.on("before-quit", () => {
   updateInstallInFlight = false;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
+  for (const [id, tunnel] of activeSshTunnels) {
+    tunnel.stop();
+    activeSshTunnels.delete(id);
+  }
   stopBackend();
   restoreStdIoCapture?.();
 });

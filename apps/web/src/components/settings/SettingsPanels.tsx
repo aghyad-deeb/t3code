@@ -45,7 +45,7 @@ import {
   getCustomModelOptionsByProvider,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { ensureNativeApi, readNativeApi } from "../../nativeApi";
+import { useActiveApi } from "../../connections/activeServerContext";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
@@ -443,6 +443,7 @@ function AboutVersionSection() {
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
+  const api = useActiveApi();
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { resetSettings } = useUpdateSettings();
@@ -496,8 +497,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 
   const restoreDefaults = useCallback(async () => {
     if (changedSettingLabels.length === 0) return;
-    const api = readNativeApi();
-    const confirmed = await (api ?? ensureNativeApi()).dialogs.confirm(
+    const confirmed = await api.dialogs.confirm(
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
         "\n",
       ),
@@ -507,7 +507,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     setTheme("system");
     resetSettings();
     onRestored?.();
-  }, [changedSettingLabels, onRestored, resetSettings, setTheme]);
+  }, [api, changedSettingLabels, onRestored, resetSettings, setTheme]);
 
   return {
     changedSettingLabels,
@@ -516,6 +516,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 export function GeneralSettingsPanel() {
+  const api = useActiveApi();
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
@@ -554,8 +555,8 @@ export function GeneralSettingsPanel() {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setIsRefreshingProviders(true);
-    void ensureNativeApi()
-      .server.refreshProviders()
+    void api.server
+      .refreshProviders()
       .catch((error: unknown) => {
         console.warn("Failed to refresh providers", error);
       })
@@ -563,7 +564,7 @@ export function GeneralSettingsPanel() {
         refreshingRef.current = false;
         setIsRefreshingProviders(false);
       });
-  }, []);
+  }, [api]);
 
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
@@ -614,8 +615,8 @@ export function GeneralSettingsPanel() {
         return;
       }
 
-      void ensureNativeApi()
-        .shell.openInEditor(path, editor)
+      void api.shell
+        .openInEditor(path, editor)
         .catch((error) => {
           setOpenPathErrorByTarget((existing) => ({
             ...existing,
@@ -626,7 +627,7 @@ export function GeneralSettingsPanel() {
           setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
         });
     },
-    [availableEditors],
+    [api, availableEditors],
   );
 
   const openKeybindingsFile = useCallback(() => {
@@ -1479,6 +1480,7 @@ export function GeneralSettingsPanel() {
 }
 
 export function ArchivedThreadsPanel() {
+  const api = useActiveApi();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
@@ -1500,8 +1502,6 @@ export function ArchivedThreadsPanel() {
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
-      const api = readNativeApi();
-      if (!api) return;
       const clicked = await api.contextMenu.show(
         [
           { id: "unarchive", label: "Unarchive" },
@@ -1527,7 +1527,7 @@ export function ArchivedThreadsPanel() {
         await confirmAndDeleteThread(threadId);
       }
     },
-    [confirmAndDeleteThread, unarchiveThread],
+    [api, confirmAndDeleteThread, unarchiveThread],
   );
 
   return (

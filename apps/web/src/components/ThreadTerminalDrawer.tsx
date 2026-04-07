@@ -31,7 +31,7 @@ import {
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
 } from "../types";
-import { readNativeApi } from "~/nativeApi";
+import { useActiveApi } from "~/connections/activeServerContext";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
 
 const MIN_DRAWER_HEIGHT = 180;
@@ -236,6 +236,7 @@ function TerminalViewport({
   resizeEpoch,
   drawerHeight,
 }: TerminalViewportProps) {
+  const api = useActiveApi();
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -276,9 +277,6 @@ function TerminalViewport({
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
-
-    const api = readNativeApi();
-    if (!api) return;
 
     const clearSelectionAction = () => {
       selectionActionRequestIdRef.current += 1;
@@ -677,7 +675,7 @@ function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, runtimeEnv, terminalId, threadId]);
+  }, [api, cwd, runtimeEnv, terminalId, threadId]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -692,10 +690,9 @@ function TerminalViewport({
   }, [autoFocus, focusRequestId]);
 
   useEffect(() => {
-    const api = readNativeApi();
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
-    if (!api || !terminal || !fitAddon) return;
+    if (!terminal || !fitAddon) return;
     const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     const frame = window.requestAnimationFrame(() => {
       fitAddon.fit();
@@ -714,7 +711,7 @@ function TerminalViewport({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [drawerHeight, resizeEpoch, terminalId, threadId]);
+  }, [api, drawerHeight, resizeEpoch, terminalId, threadId]);
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-[4px]" />
   );

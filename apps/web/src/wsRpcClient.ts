@@ -9,6 +9,10 @@ import {
 } from "@t3tools/contracts";
 import { Effect, Stream } from "effect";
 
+import {
+  getDefaultConnection,
+  __resetDefaultConnectionForTests,
+} from "./connections/connectionRegistry";
 import { type WsRpcProtocolClient } from "./rpc/protocol";
 import { resetWsReconnectBackoff } from "./rpc/wsConnectionState";
 import { WsTransport } from "./wsTransport";
@@ -101,26 +105,28 @@ export interface WsRpcClient {
   };
 }
 
-let sharedWsRpcClient: WsRpcClient | null = null;
-
 export function getWsRpcClient(): WsRpcClient {
-  if (sharedWsRpcClient) {
-    return sharedWsRpcClient;
-  }
-  sharedWsRpcClient = createWsRpcClient();
-  return sharedWsRpcClient;
+  return getDefaultConnection().rpcClient;
 }
 
 export async function __resetWsRpcClientForTests() {
-  await sharedWsRpcClient?.dispose();
-  sharedWsRpcClient = null;
+  await __resetDefaultConnectionForTests();
 }
 
-export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
+export interface CreateWsRpcClientOptions {
+  /** Called before transport reconnect; defaults to resetting the global default connection backoff. */
+  resetReconnectBackoff?: () => void;
+}
+
+export function createWsRpcClient(
+  transport = new WsTransport(),
+  options?: CreateWsRpcClientOptions,
+): WsRpcClient {
+  const resetBackoff = options?.resetReconnectBackoff ?? resetWsReconnectBackoff;
   return {
     dispose: () => transport.dispose(),
     reconnect: async () => {
-      resetWsReconnectBackoff();
+      resetBackoff();
       await transport.reconnect();
     },
     terminal: {

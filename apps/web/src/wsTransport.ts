@@ -11,6 +11,7 @@ import {
 } from "effect";
 import { RpcClient } from "effect/unstable/rpc";
 
+import type { ProtocolHooks } from "./connections/types";
 import { ClientTracingLive, configureClientTracing } from "./observability/clientTracing";
 import {
   createWsRpcProtocolLayer,
@@ -46,12 +47,14 @@ function formatErrorMessage(error: unknown): string {
 export class WsTransport {
   private readonly tracingReady: Promise<void>;
   private readonly url: string | undefined;
+  private readonly hooks: ProtocolHooks | undefined;
   private disposed = false;
   private reconnectChain: Promise<void> = Promise.resolve();
   private session: TransportSession;
 
-  constructor(url?: string) {
+  constructor(url?: string, hooks?: ProtocolHooks) {
     this.url = url;
+    this.hooks = hooks;
     this.tracingReady = configureClientTracing();
     this.session = this.createSession();
   }
@@ -193,7 +196,7 @@ export class WsTransport {
 
   private createSession(): TransportSession {
     const runtime = ManagedRuntime.make(
-      Layer.mergeAll(createWsRpcProtocolLayer(this.url), ClientTracingLive),
+      Layer.mergeAll(createWsRpcProtocolLayer(this.url, this.hooks), ClientTracingLive),
     );
     const clientScope = runtime.runSync(Scope.make());
     return {

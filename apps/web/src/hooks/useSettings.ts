@@ -26,7 +26,9 @@ import {
   TimestampFormat,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
+import type { NativeApi } from "@t3tools/contracts";
 import { ensureNativeApi } from "~/nativeApi";
+import { useActiveApi } from "~/connections/activeServerContext";
 import { useLocalStorage } from "./useLocalStorage";
 import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
@@ -95,6 +97,7 @@ export function useSettings<T extends UnifiedSettings = UnifiedSettings>(
  * persisted via RPC. Client keys go straight to localStorage.
  */
 export function useUpdateSettings() {
+  const api = useActiveApi();
   const [, setClientSettings] = useLocalStorage(
     CLIENT_SETTINGS_STORAGE_KEY,
     DEFAULT_CLIENT_SETTINGS,
@@ -111,14 +114,14 @@ export function useUpdateSettings() {
           applySettingsUpdated(deepMerge(currentServerConfig.settings, serverPatch));
         }
         // Fire-and-forget RPC — push will reconcile on success
-        void ensureNativeApi().server.updateSettings(serverPatch);
+        void api.server.updateSettings(serverPatch);
       }
 
       if (Object.keys(clientPatch).length > 0) {
         setClientSettings((prev) => ({ ...prev, ...clientPatch }));
       }
     },
-    [setClientSettings],
+    [api, setClientSettings],
   );
 
   const resetSettings = useCallback(() => {
@@ -226,7 +229,7 @@ export function buildLegacyClientSettingsMigrationPatch(
  * If the legacy localStorage key exists, migrate its values to the new server
  * and client storage formats, then remove the legacy key so this only runs once.
  */
-export function migrateLocalSettingsToServer(): void {
+export function migrateLocalSettingsToServer(api?: NativeApi): void {
   if (typeof window === "undefined") return;
 
   const raw = localStorage.getItem(OLD_SETTINGS_KEY);
@@ -239,8 +242,8 @@ export function migrateLocalSettingsToServer(): void {
     // Migrate server-relevant keys via RPC
     const serverPatch = buildLegacyServerSettingsMigrationPatch(old);
     if (Object.keys(serverPatch).length > 0) {
-      const api = ensureNativeApi();
-      void api.server.updateSettings(serverPatch);
+      const effectiveApi = api ?? ensureNativeApi();
+      void effectiveApi.server.updateSettings(serverPatch);
     }
 
     // Migrate client-only keys to the new localStorage key

@@ -22,7 +22,7 @@ import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
-import { readNativeApi } from "../nativeApi";
+import { useActiveApi } from "../connections/activeServerContext";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -236,6 +236,7 @@ function SuspenseShikiCodeBlock({
 }
 
 function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+  const api = useActiveApi();
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownComponents = useMemo<Components>(
@@ -253,12 +254,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              const api = readNativeApi();
-              if (api) {
-                void openInPreferredEditor(api, targetPath);
-              } else {
-                console.warn("Native API not found. Unable to open file in editor.");
-              }
+              void openInPreferredEditor(api, targetPath);
             }}
           />
         );
@@ -285,7 +281,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
         );
       },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [api, cwd, diffThemeName, isStreaming],
   );
 
   return (

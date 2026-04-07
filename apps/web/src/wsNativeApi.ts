@@ -1,10 +1,12 @@
 import { type ContextMenuItem, type NativeApi } from "@t3tools/contracts";
 
+import { getConnection, getDefaultConnection } from "./connections/connectionRegistry";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { resetWsConnectionStateForTests } from "./rpc/wsConnectionState";
-import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
+import type { WsRpcClient } from "./wsRpcClient";
+import { __resetWsRpcClientForTests } from "./wsRpcClient";
 
 let instance: { api: NativeApi } | null = null;
 
@@ -16,14 +18,14 @@ export function __resetWsNativeApiForTests() {
   resetWsConnectionStateForTests();
 }
 
-export function createWsNativeApi(): NativeApi {
-  if (instance) {
-    return instance.api;
-  }
-
-  const rpcClient = getWsRpcClient();
-
-  const api: NativeApi = {
+/**
+ * Build a NativeApi facade from an arbitrary WsRpcClient.
+ *
+ * Desktop-bridge features (pickFolder, confirm, context menu, openExternal)
+ * are shared across all connections because they are local-only capabilities.
+ */
+export function buildNativeApiFromRpcClient(rpcClient: WsRpcClient): NativeApi {
+  return {
     dialogs: {
       pickFolder: async () => {
         if (!window.desktopBridge) return null;
@@ -66,6 +68,7 @@ export function createWsNativeApi(): NativeApi {
     git: {
       pull: rpcClient.git.pull,
       status: rpcClient.git.status,
+      runStackedAction: rpcClient.git.runStackedAction,
       listBranches: rpcClient.git.listBranches,
       createWorktree: rpcClient.git.createWorktree,
       removeWorktree: rpcClient.git.removeWorktree,
@@ -106,6 +109,30 @@ export function createWsNativeApi(): NativeApi {
         rpcClient.orchestration.onDomainEvent(callback, options),
     },
   };
+}
+
+/**
+ * Resolve the WebSocket-backed NativeApi for a client-side server id (multi-connection).
+ * Throws if `serverId` is not `"default"` and no connection is registered (callers must not fall back to the default transport).
+ */
+export function getNativeApiForServer(serverId: string): NativeApi {
+  if (serverId === "default") {
+    return createWsNativeApi();
+  }
+  const entry = getConnection(serverId);
+  if (!entry) {
+    throw new Error(`No WebSocket connection registered for serverId "${serverId}".`);
+  }
+  return buildNativeApiFromRpcClient(entry.rpcClient);
+}
+
+export function createWsNativeApi(): NativeApi {
+  if (instance) {
+    return instance.api;
+  }
+
+  const rpcClient = getDefaultConnection().rpcClient;
+  const api = buildNativeApiFromRpcClient(rpcClient);
 
   instance = { api };
   return api;
