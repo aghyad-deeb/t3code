@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  MonitorIcon,
   PlusIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -72,8 +73,11 @@ import {
 } from "../keybindings";
 import { getConnection } from "../connections/connectionRegistry";
 import { gitStatusQueryOptions } from "../lib/gitReactQuery";
-import { buildNativeApiFromRpcClient, createWsNativeApi } from "../wsNativeApi";
-import { useActiveApi } from "../connections/activeServerContext";
+import {
+  buildNativeApiFromRpcClient,
+  createWsNativeApi,
+  getNativeApiForServer,
+} from "../wsNativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useServerConnectionStore, type ServerConnectionInfo } from "../serverConnectionStore";
@@ -679,7 +683,7 @@ function SortableProjectItem({
 }
 
 export default function Sidebar() {
-  const api = useActiveApi();
+  const localUiApi = useMemo(() => createWsNativeApi(), []);
   const serverConnections = useServerConnectionStore((s) => s.connections);
   const projects = useStore((store) => store.projects);
   const sidebarThreadsById = useStore((store) => store.sidebarThreadsById);
@@ -845,7 +849,7 @@ export default function Sidebar() {
       event.preventDefault();
       event.stopPropagation();
 
-      void api.shell.openExternal(prUrl).catch((error) => {
+      void localUiApi.shell.openExternal(prUrl).catch((error) => {
         toastManager.add({
           type: "error",
           title: "Unable to open PR link",
@@ -853,7 +857,7 @@ export default function Sidebar() {
         });
       });
     },
-    [api],
+    [localUiApi],
   );
 
   const attemptArchiveThread = useCallback(
@@ -872,12 +876,12 @@ export default function Sidebar() {
   );
 
   const focusMostRecentThreadForProject = useCallback(
-    (projectId: ProjectId) => {
+    (projectId: ProjectId, serverId: string) => {
       const latestThread = sortThreadsForSidebar(
         (threadIdsByProjectId[projectId] ?? [])
           .map((threadId) => sidebarThreadsById[threadId])
           .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined)
-          .filter((thread) => thread.archivedAt === null),
+          .filter((thread) => thread.archivedAt === null && thread.serverId === serverId),
         appSettings.sidebarThreadSortOrder,
       )[0];
       if (!latestThread) return;
@@ -905,7 +909,7 @@ export default function Sidebar() {
 
       const existing = projects.find((project) => project.cwd === cwd);
       if (existing) {
-        focusMostRecentThreadForProject(existing.id);
+        focusMostRecentThreadForProject(existing.id, existing.serverId);
         finishAddingProject();
         return;
       }
@@ -914,7 +918,7 @@ export default function Sidebar() {
       const createdAt = new Date().toISOString();
       const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
       try {
-        await api.orchestration.dispatchCommand({
+        await getNativeApiForServer("default").orchestration.dispatchCommand({
           type: "project.create",
           commandId: newCommandId(),
           projectId,
@@ -949,7 +953,6 @@ export default function Sidebar() {
     [
       focusMostRecentThreadForProject,
       handleNewThread,
-      api,
       isAddingProject,
       projects,
       shouldBrowseForProjectImmediately,
@@ -968,7 +971,7 @@ export default function Sidebar() {
     setIsPickingFolder(true);
     let pickedPath: string | null = null;
     try {
-      pickedPath = await api.dialogs.pickFolder();
+      pickedPath = await localUiApi.dialogs.pickFolder();
     } catch {
       // Ignore picker failures and leave the current thread selection unchanged.
     }
@@ -1017,8 +1020,10 @@ export default function Sidebar() {
         finishRename();
         return;
       }
+      const summary = sidebarThreadsById[threadId];
+      const threadServerId = summary?.serverId ?? "default";
       try {
-        await api.orchestration.dispatchCommand({
+        await getNativeApiForServer(threadServerId).orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
           threadId,
@@ -1033,7 +1038,7 @@ export default function Sidebar() {
       }
       finishRename();
     },
-    [api],
+    [sidebarThreadsById],
   );
 
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
@@ -1076,9 +1081,10 @@ export default function Sidebar() {
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const thread = sidebarThreadsById[threadId];
       if (!thread) return;
+      const threadApi = getNativeApiForServer(thread.serverId);
       const threadWorkspacePath =
         thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
-      const clicked = await api.contextMenu.show(
+      const clicked = await localUiApi.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
@@ -1118,7 +1124,7 @@ export default function Sidebar() {
       }
       if (clicked !== "delete") return;
       if (appSettings.confirmThreadDelete) {
-        const confirmed = await api.dialogs.confirm(
+        const confirmed = await threadApi.dialogs.confirm(
           [
             `Delete thread "${thread.title}"?`,
             "This permanently clears conversation history for this thread.",
@@ -1131,8 +1137,8 @@ export default function Sidebar() {
       await deleteThread(threadId);
     },
     [
-      api,
       appSettings.confirmThreadDelete,
+      localUiApi,
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
@@ -1148,7 +1154,7 @@ export default function Sidebar() {
       if (ids.length === 0) return;
       const count = ids.length;
 
-      const clicked = await api.contextMenu.show(
+      const clicked = await localUiApi.contextMenu.show(
         [
           { id: "mark-unread", label: `Mark unread (${count})` },
           { id: "delete", label: `Delete (${count})`, destructive: true },
@@ -1168,7 +1174,7 @@ export default function Sidebar() {
       if (clicked !== "delete") return;
 
       if (appSettings.confirmThreadDelete) {
-        const confirmed = await api.dialogs.confirm(
+        const confirmed = await localUiApi.dialogs.confirm(
           [
             `Delete ${count} thread${count === 1 ? "" : "s"}?`,
             "This permanently clears conversation history for these threads.",
@@ -1184,8 +1190,8 @@ export default function Sidebar() {
       removeFromSelection(ids);
     },
     [
-      api,
       appSettings.confirmThreadDelete,
+      localUiApi,
       clearSelection,
       deleteThread,
       markThreadUnread,
@@ -1251,8 +1257,9 @@ export default function Sidebar() {
     async (projectId: ProjectId, position: { x: number; y: number }) => {
       const project = projects.find((entry) => entry.id === projectId);
       if (!project) return;
+      const projectApi = getNativeApiForServer(project.serverId);
 
-      const clicked = await api.contextMenu.show(
+      const clicked = await localUiApi.contextMenu.show(
         [
           { id: "copy-path", label: "Copy Project Path" },
           { id: "delete", label: "Remove project", destructive: true },
@@ -1265,7 +1272,10 @@ export default function Sidebar() {
       }
       if (clicked !== "delete") return;
 
-      const projectThreadIds = threadIdsByProjectId[projectId] ?? [];
+      const projectThreadIds = (threadIdsByProjectId[projectId] ?? []).filter((tid) => {
+        const t = sidebarThreadsById[tid];
+        return t?.serverId === project.serverId;
+      });
       if (projectThreadIds.length > 0) {
         toastManager.add({
           type: "warning",
@@ -1275,7 +1285,7 @@ export default function Sidebar() {
         return;
       }
 
-      const confirmed = await api.dialogs.confirm(`Remove project "${project.name}"?`);
+      const confirmed = await projectApi.dialogs.confirm(`Remove project "${project.name}"?`);
       if (!confirmed) return;
 
       try {
@@ -1284,7 +1294,7 @@ export default function Sidebar() {
           clearComposerDraftForThread(projectDraftThread.threadId);
         }
         clearProjectDraftThreadId(projectId);
-        await api.orchestration.dispatchCommand({
+        await projectApi.orchestration.dispatchCommand({
           type: "project.delete",
           commandId: newCommandId(),
           projectId,
@@ -1300,12 +1310,13 @@ export default function Sidebar() {
       }
     },
     [
-      api,
       clearComposerDraftForThread,
       clearProjectDraftThreadId,
       copyPathToClipboard,
       getDraftThreadByProjectId,
+      localUiApi,
       projects,
+      sidebarThreadsById,
       threadIdsByProjectId,
     ],
   );
@@ -2155,6 +2166,17 @@ export default function Sidebar() {
                     </p>
                   )}
                 </div>
+              )}
+
+              {!isOnSettings && (
+                <button
+                  type="button"
+                  onClick={() => void navigate({ to: "/settings/remote-servers" })}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <MonitorIcon className="size-3" />
+                  <span>Connect remote server</span>
+                </button>
               )}
 
               {serverGroups.map((group) => {
